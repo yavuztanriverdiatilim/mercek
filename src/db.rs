@@ -6,6 +6,23 @@ use tokio::time::{Duration, sleep};
 use tokio_postgres::NoTls;
 use tracing::{error, warn};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NginxAccessLog {
+    remote_addr: String,
+    remote_ident: Option<String>,
+    remote_user: Option<String>,
+    time_local: Option<String>,
+    request_line: Option<String>,
+    request_method: Option<String>,
+    request_path: Option<String>,
+    request_protocol: Option<String>,
+    status: Option<i32>,
+    body_bytes_sent: Option<i64>,
+    http_referer: Option<String>,
+    http_user_agent: Option<String>,
+    http_x_forwarded_for: Option<String>,
+}
+
 #[derive(Clone)]
 pub struct PgWriter {
     pool: Pool,
@@ -117,6 +134,29 @@ impl PgWriter {
             .await
             .context("prepare insert failed")?;
 
+        let nginx_stmt = tx
+            .prepare_cached(
+                "INSERT INTO nginx_access_logs (
+                    event_ts, host, app_name,
+                    raw_message, received_at, source,
+                    remote_addr, remote_ident, remote_user,
+                    time_local, request_line, request_method,
+                    request_path, request_protocol, status,
+                    body_bytes_sent, http_referer, http_user_agent,
+                    http_x_forwarded_for
+                ) VALUES (
+                    $1,$2,$3,
+                    $4,$5,$6,
+                    $7,$8,$9,
+                    $10,$11,$12,
+                    $13,$14,$15,
+                    $16,$17,$18,
+                    $19
+                )",
+            )
+            .await
+            .context("prepare nginx insert failed")?;
+
         for event in events {
             let fmt = format!("{:?}", event.format).to_lowercase();
             let protocol = format!("{:?}", event.protocol).to_lowercase();
@@ -143,11 +183,153 @@ impl PgWriter {
             )
             .await
             .context("insert failed")?;
+
+            if event
+                .app_name
+                .as_deref()
+                .map(|v| v.eq_ignore_ascii_case("nginx"))
+                .unwrap_or(false)
+                && let Some(nginx) = parse_nginx_access_log(&event.message)
+            {
+                tx.execute(
+                    &nginx_stmt,
+                    &[
+                        &event.timestamp,
+                        &event.host,
+                        &event.app_name,
+                        &event.raw_message,
+                        &event.received_at,
+                        &event.source,
+                        &nginx.remote_addr,
+                        &nginx.remote_ident,
+                        &nginx.remote_user,
+                        &nginx.time_local,
+                        &nginx.request_line,
+                        &nginx.request_method,
+                        &nginx.request_path,
+                        &nginx.request_protocol,
+                        &nginx.status,
+                        &nginx.body_bytes_sent,
+                        &nginx.http_referer,
+                        &nginx.http_user_agent,
+                        &nginx.http_x_forwarded_for,
+                    ],
+                )
+                .await
+                .context("insert nginx access log failed")?;
+            }
         }
 
         tx.commit().await.context("tx commit failed")?;
         Ok(events.len())
     }
+}
+
+fn parse_nginx_access_log(message: &str) -> Option<NginxAccessLog> {
+    let tokens = tokenize_nginx_line(message);
+    if tokens.len() < 7 {
+        return None;
+    }
+
+    let remote_addr = tokens.first()?.clone();
+    let remote_ident = none_if_dash(tokens.get(1)?);
+    let remote_user = none_if_dash(tokens.get(2)?);
+    let time_local = tokens.get(3).and_then(|v| none_if_dash(v));
+    let request_line = tokens.get(4).and_then(|v| none_if_dash(v));
+    let status = tokens.get(5).and_then(|v| v.parse::<i32>().ok());
+    let body_bytes_sent = tokens.get(6).and_then(|v| {
+        if v == "-" {
+            None
+        } else {
+            v.parse::<i64>().ok()
+        }
+    });
+    let http_referer = tokens.get(7).and_then(|v| none_if_dash(v));
+    let http_user_agent = tokens.get(8).and_then(|v| none_if_dash(v));
+    let http_x_forwarded_for = tokens.get(9).and_then(|v| none_if_dash(v));
+
+    let (request_method, request_path, request_protocol) = request_line
+        .as_deref()
+        .map(split_request_line)
+        .unwrap_or((None, None, None));
+
+    Some(NginxAccessLog {
+        remote_addr,
+        remote_ident,
+        remote_user,
+        time_local,
+        request_line,
+        request_method,
+        request_path,
+        request_protocol,
+        status,
+        body_bytes_sent,
+        http_referer,
+        http_user_agent,
+        http_x_forwarded_for,
+    })
+}
+
+fn tokenize_nginx_line(message: &str) -> Vec<String> {
+    let chars: Vec<char> = message.chars().collect();
+    let mut i = 0usize;
+    let mut out = Vec::new();
+
+    while i < chars.len() {
+        while i < chars.len() && chars[i].is_whitespace() {
+            i += 1;
+        }
+        if i >= chars.len() {
+            break;
+        }
+
+        if chars[i] == '"' {
+            i += 1;
+            let start = i;
+            while i < chars.len() && chars[i] != '"' {
+                i += 1;
+            }
+            out.push(chars[start..i].iter().collect());
+            if i < chars.len() && chars[i] == '"' {
+                i += 1;
+            }
+            continue;
+        }
+
+        if chars[i] == '[' {
+            i += 1;
+            let start = i;
+            while i < chars.len() && chars[i] != ']' {
+                i += 1;
+            }
+            out.push(chars[start..i].iter().collect());
+            if i < chars.len() && chars[i] == ']' {
+                i += 1;
+            }
+            continue;
+        }
+
+        let start = i;
+        while i < chars.len() && !chars[i].is_whitespace() {
+            i += 1;
+        }
+        out.push(chars[start..i].iter().collect());
+    }
+
+    out
+}
+
+fn none_if_dash(v: &str) -> Option<String> {
+    if v == "-" { None } else { Some(v.to_string()) }
+}
+
+fn split_request_line(input: &str) -> (Option<String>, Option<String>, Option<String>) {
+    let mut parts = input.split_whitespace();
+    (
+        parts.next().map(|v| v.to_string()),
+        parts.next().map(|v| v.to_string()),
+        parts.next().map(|v| v.to_string()),
+    )
 }
 
 #[cfg(test)]
@@ -164,5 +346,33 @@ mod tests {
         }
         let writer = PgWriter::new(&cfg).await;
         assert!(writer.is_ok());
+    }
+
+    #[test]
+    fn parses_nginx_combined_access_log() {
+        let line = r#"127.0.0.1 - - [22/Apr/2026:12:34:56 +0000] "GET /healthz HTTP/1.1" 200 12 "-" "curl/8.5.0""#;
+        let parsed = super::parse_nginx_access_log(line).expect("should parse nginx access log");
+        assert_eq!(parsed.remote_addr, "127.0.0.1");
+        assert_eq!(parsed.remote_ident, None);
+        assert_eq!(parsed.remote_user, None);
+        assert_eq!(parsed.request_method.as_deref(), Some("GET"));
+        assert_eq!(parsed.request_path.as_deref(), Some("/healthz"));
+        assert_eq!(parsed.request_protocol.as_deref(), Some("HTTP/1.1"));
+        assert_eq!(parsed.status, Some(200));
+        assert_eq!(parsed.body_bytes_sent, Some(12));
+        assert_eq!(parsed.http_user_agent.as_deref(), Some("curl/8.5.0"));
+    }
+
+    #[test]
+    fn parses_nginx_access_log_with_forwarded_for() {
+        let line = r#"10.0.0.10 - john [22/Apr/2026:12:34:56 +0000] "POST /api/login HTTP/1.1" 401 321 "https://example.com" "Mozilla/5.0" "203.0.113.12""#;
+        let parsed = super::parse_nginx_access_log(line).expect("should parse nginx access log");
+        assert_eq!(parsed.remote_addr, "10.0.0.10");
+        assert_eq!(parsed.remote_user.as_deref(), Some("john"));
+        assert_eq!(parsed.request_method.as_deref(), Some("POST"));
+        assert_eq!(parsed.status, Some(401));
+        assert_eq!(parsed.body_bytes_sent, Some(321));
+        assert_eq!(parsed.http_referer.as_deref(), Some("https://example.com"));
+        assert_eq!(parsed.http_x_forwarded_for.as_deref(), Some("203.0.113.12"));
     }
 }

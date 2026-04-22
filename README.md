@@ -9,6 +9,7 @@ Tokio tabanlı async syslog sunucusu. RFC3164 ve RFC5424 formatlarını best-eff
 - Parse hatalarında raw mesajı koruyarak `valid=false` kayıt
 - Bounded queue, `drop_newest` veya `backpressure` politikası
 - Batch + transaction tabanlı PostgreSQL yazımı
+- `app_name/tag=nginx` olan kayıtları nginx access log alanlarına parse edip `nginx_access_logs` tablosuna da yazma
 - Retry + dead-letter loglama
 - Partitioned tablo şeması (`received_at` RANGE)
 - `/healthz`, `/readyz`, `/metrics` endpointleri
@@ -61,6 +62,7 @@ MERCEK__LIMITS__MAX_MESSAGE_BYTES=65536
 Şema: `sql/schema.sql`
 
 - Ana tablo: `syslog_events`
+- Nginx access log tablosu: `nginx_access_logs`
 - Partition key: `received_at`
 - İndeksler: `received_at`, `host`, `severity`, `app_name`
 
