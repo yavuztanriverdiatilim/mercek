@@ -25,7 +25,7 @@ struct NginxAccessLog {
 
 enum EventWriteTarget {
     SyslogOnly,
-    NginxAccessOnly(NginxAccessLog),
+    NginxAccessOnly(Box<NginxAccessLog>),
 }
 
 #[derive(Clone)]
@@ -279,7 +279,7 @@ fn event_write_target(event: &SyslogEvent) -> EventWriteTarget {
         .map(|v| v.eq_ignore_ascii_case("nginx"))
         .unwrap_or(false);
     if is_nginx && let Some(nginx) = parse_nginx_access_log(&event.message) {
-        return EventWriteTarget::NginxAccessOnly(nginx);
+        return EventWriteTarget::NginxAccessOnly(Box::new(nginx));
     }
     EventWriteTarget::SyslogOnly
 }
