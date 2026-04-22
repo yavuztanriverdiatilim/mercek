@@ -14,9 +14,19 @@ Tokio tabanlı async syslog sunucusu. RFC3164 ve RFC5424 formatlarını best-eff
 - `/healthz`, `/readyz`, `/metrics` endpointleri
 - Graceful shutdown
 
+## DB oluşturma
+```psql
+postgres=# create user mercek_usr;
+postgres=# \password mercek_usr 
+Enter new password for user "mercek_usr": 
+Enter it again: 
+postgres=# create database mercek with owner mercek_usr;
+```
+
 ## Çalıştırma
 
 ```bash
+export MERCEK__DB__DSN="host=127.0.0.1 user=mercek_usr password=secret dbname=mercek"
 cargo run
 ```
 
@@ -34,7 +44,7 @@ Environment prefix: `MERCEK__`
 Örnekler:
 
 ```bash
-MERCEK__DB__DSN="host=127.0.0.1 user=postgres password=postgres dbname=postgres"
+MERCEK__DB__DSN="host=127.0.0.1 user=mercek_usr password=secret dbname=mercek"
 MERCEK__LISTENERS__ENABLE_TLS=true
 MERCEK__LISTENERS__TLS_CERT_PATH="/etc/mercek/tls.crt"
 MERCEK__LISTENERS__TLS_KEY_PATH="/etc/mercek/tls.key"
