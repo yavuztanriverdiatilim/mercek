@@ -23,6 +23,11 @@ struct NginxAccessLog {
     http_x_forwarded_for: Option<String>,
 }
 
+enum EventWriteTarget {
+    SyslogOnly,
+    NginxAccessOnly(NginxAccessLog),
+}
+
 #[derive(Clone)]
 pub struct PgWriter {
     pool: Pool,
@@ -160,63 +165,60 @@ impl PgWriter {
         for event in events {
             let fmt = format!("{:?}", event.format).to_lowercase();
             let protocol = format!("{:?}", event.protocol).to_lowercase();
-            tx.execute(
-                &stmt,
-                &[
-                    &event.timestamp,
-                    &event.host,
-                    &event.app_name,
-                    &event.procid,
-                    &event.msgid,
-                    &event.facility,
-                    &event.severity,
-                    &event.structured_data,
-                    &event.message,
-                    &event.raw_message,
-                    &fmt,
-                    &event.valid,
-                    &event.received_at,
-                    &event.source,
-                    &protocol,
-                    &event.error,
-                ],
-            )
-            .await
-            .context("insert failed")?;
-
-            if event
-                .app_name
-                .as_deref()
-                .map(|v| v.eq_ignore_ascii_case("nginx"))
-                .unwrap_or(false)
-                && let Some(nginx) = parse_nginx_access_log(&event.message)
-            {
-                tx.execute(
-                    &nginx_stmt,
-                    &[
-                        &event.timestamp,
-                        &event.host,
-                        &event.app_name,
-                        &event.raw_message,
-                        &event.received_at,
-                        &event.source,
-                        &nginx.remote_addr,
-                        &nginx.remote_ident,
-                        &nginx.remote_user,
-                        &nginx.time_local,
-                        &nginx.request_line,
-                        &nginx.request_method,
-                        &nginx.request_path,
-                        &nginx.request_protocol,
-                        &nginx.status,
-                        &nginx.body_bytes_sent,
-                        &nginx.http_referer,
-                        &nginx.http_user_agent,
-                        &nginx.http_x_forwarded_for,
-                    ],
-                )
-                .await
-                .context("insert nginx access log failed")?;
+            match event_write_target(event) {
+                EventWriteTarget::NginxAccessOnly(nginx) => {
+                    tx.execute(
+                        &nginx_stmt,
+                        &[
+                            &event.timestamp,
+                            &event.host,
+                            &event.app_name,
+                            &event.raw_message,
+                            &event.received_at,
+                            &event.source,
+                            &nginx.remote_addr,
+                            &nginx.remote_ident,
+                            &nginx.remote_user,
+                            &nginx.time_local,
+                            &nginx.request_line,
+                            &nginx.request_method,
+                            &nginx.request_path,
+                            &nginx.request_protocol,
+                            &nginx.status,
+                            &nginx.body_bytes_sent,
+                            &nginx.http_referer,
+                            &nginx.http_user_agent,
+                            &nginx.http_x_forwarded_for,
+                        ],
+                    )
+                    .await
+                    .context("insert nginx access log failed")?;
+                }
+                EventWriteTarget::SyslogOnly => {
+                    tx.execute(
+                        &stmt,
+                        &[
+                            &event.timestamp,
+                            &event.host,
+                            &event.app_name,
+                            &event.procid,
+                            &event.msgid,
+                            &event.facility,
+                            &event.severity,
+                            &event.structured_data,
+                            &event.message,
+                            &event.raw_message,
+                            &fmt,
+                            &event.valid,
+                            &event.received_at,
+                            &event.source,
+                            &protocol,
+                            &event.error,
+                        ],
+                    )
+                    .await
+                    .context("insert failed")?;
+                }
             }
         }
 
@@ -268,6 +270,18 @@ fn parse_nginx_access_log(message: &str) -> Option<NginxAccessLog> {
         http_user_agent,
         http_x_forwarded_for,
     })
+}
+
+fn event_write_target(event: &SyslogEvent) -> EventWriteTarget {
+    let is_nginx = event
+        .app_name
+        .as_deref()
+        .map(|v| v.eq_ignore_ascii_case("nginx"))
+        .unwrap_or(false);
+    if is_nginx && let Some(nginx) = parse_nginx_access_log(&event.message) {
+        return EventWriteTarget::NginxAccessOnly(nginx);
+    }
+    EventWriteTarget::SyslogOnly
 }
 
 fn tokenize_nginx_line(message: &str) -> Vec<String> {
@@ -334,8 +348,12 @@ fn split_request_line(input: &str) -> (Option<String>, Option<String>, Option<St
 
 #[cfg(test)]
 mod tests {
-    use super::PgWriter;
-    use crate::config::AppConfig;
+    use super::{EventWriteTarget, PgWriter};
+    use crate::{
+        config::AppConfig,
+        model::{EventFormat, InputProtocol, SyslogEvent},
+    };
+    use chrono::Utc;
 
     #[tokio::test]
     #[ignore = "requires TEST_DATABASE_DSN"]
@@ -374,5 +392,53 @@ mod tests {
         assert_eq!(parsed.body_bytes_sent, Some(321));
         assert_eq!(parsed.http_referer.as_deref(), Some("https://example.com"));
         assert_eq!(parsed.http_x_forwarded_for.as_deref(), Some("203.0.113.12"));
+    }
+
+    #[test]
+    fn routes_nginx_access_log_to_nginx_only() {
+        let event = sample_event(
+            Some("nginx"),
+            r#"127.0.0.1 - - [22/Apr/2026:12:34:56 +0000] "GET /healthz HTTP/1.1" 200 12 "-" "curl/8.5.0""#,
+        );
+        let target = super::event_write_target(&event);
+        assert!(matches!(target, EventWriteTarget::NginxAccessOnly(_)));
+    }
+
+    #[test]
+    fn routes_non_nginx_to_syslog_only() {
+        let event = sample_event(
+            Some("sshd"),
+            r#"127.0.0.1 - - [22/Apr/2026:12:34:56 +0000] "GET /healthz HTTP/1.1" 200 12 "-" "curl/8.5.0""#,
+        );
+        let target = super::event_write_target(&event);
+        assert!(matches!(target, EventWriteTarget::SyslogOnly));
+    }
+
+    #[test]
+    fn routes_unparseable_nginx_to_syslog_only() {
+        let event = sample_event(Some("nginx"), "invalid-nginx-line");
+        let target = super::event_write_target(&event);
+        assert!(matches!(target, EventWriteTarget::SyslogOnly));
+    }
+
+    fn sample_event(app_name: Option<&str>, message: &str) -> SyslogEvent {
+        SyslogEvent {
+            timestamp: None,
+            host: Some("localhost".to_string()),
+            app_name: app_name.map(ToString::to_string),
+            procid: None,
+            msgid: None,
+            facility: None,
+            severity: None,
+            structured_data: None,
+            message: message.to_string(),
+            raw_message: message.to_string(),
+            format: EventFormat::Rfc3164,
+            valid: true,
+            received_at: Utc::now(),
+            source: None,
+            protocol: InputProtocol::Udp,
+            error: None,
+        }
     }
 }
