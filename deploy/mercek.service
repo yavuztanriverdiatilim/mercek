@@ -1,0 +1,20 @@
+[Unit]
+Description=Mercek async syslog collector
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/mercek
+Restart=always
+RestartSec=3
+Environment=MERCEK__LOG__LEVEL=info
+Environment=MERCEK__LISTENERS__ENABLE_TLS=false
+Environment=MERCEK__DB__DSN=host=127.0.0.1 user=postgres password=postgres dbname=postgres
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+LimitNOFILE=1048576
+
+[Install]
+WantedBy=multi-user.target
