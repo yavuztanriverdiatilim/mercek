@@ -1,1 +1,72 @@
 # mercek
+
+Tokio tabanlı async syslog sunucusu. RFC3164 ve RFC5424 formatlarını best-effort parse eder, normalize edilmiş event modelini PostgreSQL'e deadpool + tokio-postgres ile yazar.
+
+## Özellikler
+
+- UDP / TCP / TLS syslog dinleyicileri
+- RFC3164 + RFC5424 otomatik tespit ve parse
+- Parse hatalarında raw mesajı koruyarak `valid=false` kayıt
+- Bounded queue, `drop_newest` veya `backpressure` politikası
+- Batch + transaction tabanlı PostgreSQL yazımı
+- Retry + dead-letter loglama
+- Partitioned tablo şeması (`received_at` RANGE)
+- `/healthz`, `/readyz`, `/metrics` endpointleri
+- Graceful shutdown
+
+## Çalıştırma
+
+```bash
+cargo run
+```
+
+Varsayılanlar:
+
+- UDP: `0.0.0.0:5514`
+- TCP: `0.0.0.0:5514`
+- TLS: `0.0.0.0:6514` (kapalı)
+- HTTP metrics: `0.0.0.0:9000`
+
+## Konfigürasyon (env)
+
+Environment prefix: `MERCEK__`
+
+Örnekler:
+
+```bash
+MERCEK__DB__DSN="host=127.0.0.1 user=postgres password=postgres dbname=postgres"
+MERCEK__LISTENERS__ENABLE_TLS=true
+MERCEK__LISTENERS__TLS_CERT_PATH="/etc/mercek/tls.crt"
+MERCEK__LISTENERS__TLS_KEY_PATH="/etc/mercek/tls.key"
+MERCEK__QUEUE__POLICY="drop_newest" # veya backpressure
+MERCEK__BATCHING__BATCH_SIZE=1000
+MERCEK__BATCHING__FLUSH_INTERVAL_MS=200
+MERCEK__RETRY__ATTEMPTS=5
+MERCEK__RETRY__BACKOFF_MS=250
+MERCEK__LIMITS__MAX_MESSAGE_BYTES=65536
+```
+
+## Veritabanı
+
+Şema: [`/home/runner/work/mercek/mercek/sql/schema.sql`](/home/runner/work/mercek/mercek/sql/schema.sql)
+
+- Ana tablo: `syslog_events`
+- Partition key: `received_at`
+- İndeksler: `received_at`, `host`, `severity`, `app_name`
+
+Otomatik bootstrap açıkken uygulama başlarken tablo ve geçerli ay partition'ı oluşturur.
+
+## Testler
+
+```bash
+cargo test
+```
+
+- Parser unit testleri mevcut
+- PostgreSQL entegrasyon testi `#[ignore]`; çalıştırmak için `TEST_DATABASE_DSN` ver
+
+## Operasyon
+
+- Dockerfile: `/home/runner/work/mercek/mercek/deploy/Dockerfile`
+- systemd unit: `/home/runner/work/mercek/mercek/deploy/mercek.service`
+- Retention/rotation için PostgreSQL partition cleanup cron/job önerilir (aylık partition drop/archival).
