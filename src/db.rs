@@ -234,8 +234,8 @@ fn parse_nginx_access_log(message: &str) -> Option<NginxAccessLog> {
     let remote_addr = tokens.first()?.clone();
     let remote_ident = none_if_dash(tokens.get(1)?);
     let remote_user = none_if_dash(tokens.get(2)?);
-    let time_local = tokens.get(3).and_then(none_if_dash);
-    let request_line = tokens.get(4).and_then(none_if_dash);
+    let time_local = tokens.get(3).and_then(|v| none_if_dash(v));
+    let request_line = tokens.get(4).and_then(|v| none_if_dash(v));
     let status = tokens.get(5).and_then(|v| v.parse::<i32>().ok());
     let body_bytes_sent = tokens.get(6).and_then(|v| {
         if v == "-" {
@@ -244,9 +244,9 @@ fn parse_nginx_access_log(message: &str) -> Option<NginxAccessLog> {
             v.parse::<i64>().ok()
         }
     });
-    let http_referer = tokens.get(7).and_then(none_if_dash);
-    let http_user_agent = tokens.get(8).and_then(none_if_dash);
-    let http_x_forwarded_for = tokens.get(9).and_then(none_if_dash);
+    let http_referer = tokens.get(7).and_then(|v| none_if_dash(v));
+    let http_user_agent = tokens.get(8).and_then(|v| none_if_dash(v));
+    let http_x_forwarded_for = tokens.get(9).and_then(|v| none_if_dash(v));
 
     let (request_method, request_path, request_protocol) = request_line
         .as_deref()
@@ -319,7 +319,7 @@ fn tokenize_nginx_line(message: &str) -> Vec<String> {
     out
 }
 
-fn none_if_dash(v: &String) -> Option<String> {
+fn none_if_dash(v: &str) -> Option<String> {
     if v == "-" { None } else { Some(v.to_string()) }
 }
 
