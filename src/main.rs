@@ -21,7 +21,9 @@ async fn main() -> Result<()> {
     let listeners_tx = ingress_tx.clone();
     let listeners_shutdown = shutdown_rx.resubscribe();
     let listener_task = tokio::spawn(async move {
-        if let Err(e) = listener::spawn_listeners(listeners_cfg, listeners_tx, listeners_shutdown).await {
+        if let Err(e) =
+            listener::spawn_listeners(listeners_cfg, listeners_tx, listeners_shutdown).await
+        {
             error!(error=%e, "listeners exited with error");
         }
     });
@@ -29,7 +31,15 @@ async fn main() -> Result<()> {
     let pipeline_cfg = cfg.clone();
     let pipeline_shutdown = shutdown_rx.resubscribe();
     let pipeline_task = tokio::spawn(async move {
-        pipeline::run_processors(pipeline_cfg, db, ingress_rx, db_tx, db_rx, pipeline_shutdown).await;
+        pipeline::run_processors(
+            pipeline_cfg,
+            db,
+            ingress_rx,
+            db_tx,
+            db_rx,
+            pipeline_shutdown,
+        )
+        .await;
     });
 
     let metrics_shutdown = shutdown_rx.resubscribe();

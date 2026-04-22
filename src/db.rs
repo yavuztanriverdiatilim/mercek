@@ -15,7 +15,8 @@ pub struct PgWriter {
 
 impl PgWriter {
     pub async fn new(config: &AppConfig) -> Result<Self> {
-        let pg_cfg: tokio_postgres::Config = config.db.dsn.parse().context("invalid PostgreSQL DSN")?;
+        let pg_cfg: tokio_postgres::Config =
+            config.db.dsn.parse().context("invalid PostgreSQL DSN")?;
         let manager = Manager::from_config(
             pg_cfg,
             NoTls,
@@ -45,7 +46,10 @@ impl PgWriter {
     async fn bootstrap(&self) -> Result<()> {
         let client = self.pool.get().await.context("pool acquire failed")?;
         let ddl = include_str!("../sql/schema.sql");
-        client.batch_execute(ddl).await.context("schema bootstrap failed")?;
+        client
+            .batch_execute(ddl)
+            .await
+            .context("schema bootstrap failed")?;
 
         let now = Utc::now();
         let partition_name = format!("syslog_events_{}_{:02}", now.year(), now.month());
@@ -83,7 +87,10 @@ impl PgWriter {
                         return Err(err);
                     }
                     warn!(attempt, error = %err, "db write failed, retrying");
-                    sleep(Duration::from_millis(self.retry_backoff_ms * attempt as u64)).await;
+                    sleep(Duration::from_millis(
+                        self.retry_backoff_ms * attempt as u64,
+                    ))
+                    .await;
                 }
             }
         }

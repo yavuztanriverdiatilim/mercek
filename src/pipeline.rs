@@ -126,7 +126,8 @@ async fn flush_batch(db: &PgWriter, batch: &mut Vec<SyslogEvent>) {
     match db.write_batch(batch).await {
         Ok(inserted) => {
             metrics::counter!("syslog_db_written_total").increment(inserted as u64);
-            metrics::histogram!("syslog_db_flush_latency_ms").record(started.elapsed().as_millis() as f64);
+            metrics::histogram!("syslog_db_flush_latency_ms")
+                .record(started.elapsed().as_millis() as f64);
         }
         Err(err) => {
             warn!(error=%err, count=batch.len(), "failed to persist batch; writing dead-letter logs");

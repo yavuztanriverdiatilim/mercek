@@ -1,7 +1,7 @@
 use anyhow::Result;
 use serde::Deserialize;
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct AppConfig {
     #[serde(default)]
     pub listeners: ListenerConfig,
@@ -105,21 +105,6 @@ pub struct LimitsConfig {
 pub struct LogConfig {
     #[serde(default = "default_log_level")]
     pub level: String,
-}
-
-impl Default for AppConfig {
-    fn default() -> Self {
-        Self {
-            listeners: ListenerConfig::default(),
-            queue: QueueConfig::default(),
-            db: DbConfig::default(),
-            batching: BatchingConfig::default(),
-            retry: RetryConfig::default(),
-            metrics: MetricsConfig::default(),
-            limits: LimitsConfig::default(),
-            log: LogConfig::default(),
-        }
-    }
 }
 
 impl Default for ListenerConfig {

@@ -220,7 +220,14 @@ async fn read_stream_lines<S: AsyncRead + Unpin>(
             warn!(source=%source, size=msg.len(), "message exceeded configured max size");
             continue;
         }
-        forward_message(&cfg, &ingress_tx, msg.to_string(), Some(source), protocol.clone()).await;
+        forward_message(
+            &cfg,
+            &ingress_tx,
+            msg.to_string(),
+            Some(source),
+            protocol.clone(),
+        )
+        .await;
     }
     Ok(())
 }

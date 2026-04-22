@@ -3,7 +3,8 @@ use chrono::{Datelike, NaiveDateTime, TimeZone, Utc};
 use serde_json::{Map, Value};
 
 pub fn parse(raw: RawMessage) -> SyslogEvent {
-    let msg = raw.payload.trim();
+    let payload = raw.payload.clone();
+    let msg = payload.trim();
     let (pri, rest) = match parse_pri(msg) {
         Some(v) => v,
         None => return SyslogEvent::invalid(raw, "missing PRI"),
@@ -29,10 +30,10 @@ fn parse_pri(msg: &str) -> Option<(u8, &str)> {
 }
 
 fn detect_format(rest: &str) -> EventFormat {
-    if let Some((first, _)) = rest.split_once(' ') {
-        if first.parse::<u16>().is_ok() {
-            return EventFormat::Rfc5424;
-        }
+    if let Some((first, _)) = rest.split_once(' ')
+        && first.parse::<u16>().is_ok()
+    {
+        return EventFormat::Rfc5424;
     }
 
     if rest.len() >= 16 && is_rfc3164_ts(&rest[0..15.min(rest.len())]) {
@@ -49,25 +50,59 @@ fn is_rfc3164_ts(s: &str) -> bool {
     }
     matches!(
         &trimmed[0..3.min(trimmed.len())],
-        "Jan" | "Feb" | "Mar" | "Apr" | "May" | "Jun" | "Jul" | "Aug" | "Sep" | "Oct" | "Nov" | "Dec"
+        "Jan"
+            | "Feb"
+            | "Mar"
+            | "Apr"
+            | "May"
+            | "Jun"
+            | "Jul"
+            | "Aug"
+            | "Sep"
+            | "Oct"
+            | "Nov"
+            | "Dec"
     )
 }
 
-fn parse_rfc3164(raw: RawMessage, rest: &str, facility: Option<i16>, severity: Option<i16>) -> SyslogEvent {
-    let parts: Vec<&str> = rest.split_whitespace().collect();
-    if parts.len() < 4 {
+fn parse_rfc3164(
+    raw: RawMessage,
+    rest: &str,
+    facility: Option<i16>,
+    severity: Option<i16>,
+) -> SyslogEvent {
+    let (month, rem1) = match consume_token(rest) {
+        Some(v) => v,
+        None => return SyslogEvent::invalid(raw, "invalid RFC3164 payload"),
+    };
+    let (day, rem2) = match consume_token(rem1) {
+        Some(v) => v,
+        None => return SyslogEvent::invalid(raw, "invalid RFC3164 payload"),
+    };
+    let (time, rem3) = match consume_token(rem2) {
+        Some(v) => v,
+        None => return SyslogEvent::invalid(raw, "invalid RFC3164 payload"),
+    };
+    let (host_token, rem4) = match consume_token(rem3) {
+        Some(v) => v,
+        None => return SyslogEvent::invalid(raw, "invalid RFC3164 payload"),
+    };
+
+    if month.len() != 3 || !time.contains(':') {
         return SyslogEvent::invalid(raw, "invalid RFC3164 payload");
     }
 
-    let ts_token = parts[0..3].join(" ");
+    let ts_token = format!("{month} {day} {time}");
     let current_year = Utc::now().year();
-    let dt = NaiveDateTime::parse_from_str(&format!("{} {}", current_year, ts_token), "%Y %b %e %H:%M:%S")
-        .ok()
-        .map(|d| Utc.from_utc_datetime(&d));
+    let dt = NaiveDateTime::parse_from_str(
+        &format!("{} {}", current_year, ts_token),
+        "%Y %b %e %H:%M:%S",
+    )
+    .ok()
+    .map(|d| Utc.from_utc_datetime(&d));
 
-    let host = parts.get(3).map(|s| s.to_string());
-    let msg_start = nth_index(rest, ' ', 4).unwrap_or(rest.len());
-    let msg_body = rest[msg_start..].trim().to_string();
+    let host = Some(host_token.to_string());
+    let msg_body = rem4.trim().to_string();
 
     let (app_name, procid, message) = split_tag_and_message(&msg_body);
 
@@ -91,7 +126,21 @@ fn parse_rfc3164(raw: RawMessage, rest: &str, facility: Option<i16>, severity: O
     }
 }
 
-fn parse_rfc5424(raw: RawMessage, rest: &str, facility: Option<i16>, severity: Option<i16>) -> SyslogEvent {
+fn consume_token(input: &str) -> Option<(&str, &str)> {
+    let s = input.trim_start();
+    if s.is_empty() {
+        return None;
+    }
+    let end = s.find(char::is_whitespace).unwrap_or(s.len());
+    Some((&s[..end], &s[end..]))
+}
+
+fn parse_rfc5424(
+    raw: RawMessage,
+    rest: &str,
+    facility: Option<i16>,
+    severity: Option<i16>,
+) -> SyslogEvent {
     let mut iter = rest.splitn(8, ' ');
     let _version = iter.next();
     let ts = iter.next();
@@ -101,7 +150,13 @@ fn parse_rfc5424(raw: RawMessage, rest: &str, facility: Option<i16>, severity: O
     let msgid = iter.next();
     let sd_and_msg = iter.next();
 
-    if ts.is_none() || host.is_none() || app.is_none() || procid.is_none() || msgid.is_none() || sd_and_msg.is_none() {
+    if ts.is_none()
+        || host.is_none()
+        || app.is_none()
+        || procid.is_none()
+        || msgid.is_none()
+        || sd_and_msg.is_none()
+    {
         return SyslogEvent::invalid(raw, "invalid RFC5424 header");
     }
 
@@ -110,7 +165,8 @@ fn parse_rfc5424(raw: RawMessage, rest: &str, facility: Option<i16>, severity: O
         .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
         .map(|t| t.with_timezone(&Utc));
 
-    let (structured_data, message) = parse_structured_data_and_message(sd_and_msg.unwrap_or_default());
+    let (structured_data, message) =
+        parse_structured_data_and_message(sd_and_msg.unwrap_or_default());
 
     SyslogEvent {
         timestamp,
@@ -205,7 +261,10 @@ fn parse_sd_to_json(sd: &str) -> Value {
 
         for kv in split {
             if let Some((k, v)) = kv.split_once('=') {
-                map.insert(k.to_string(), Value::String(v.trim_matches('"').to_string()));
+                map.insert(
+                    k.to_string(),
+                    Value::String(v.trim_matches('"').to_string()),
+                );
             }
         }
         arr.push(Value::Object(map));
@@ -228,19 +287,6 @@ fn split_tag_and_message(msg: &str) -> (Option<String>, Option<String>, String) 
     }
 
     (None, None, msg.to_string())
-}
-
-fn nth_index(s: &str, ch: char, n: usize) -> Option<usize> {
-    let mut count = 0usize;
-    for (idx, c) in s.char_indices() {
-        if c == ch {
-            count += 1;
-            if count == n {
-                return Some(idx);
-            }
-        }
-    }
-    None
 }
 
 #[cfg(test)]

@@ -48,7 +48,7 @@ MERCEK__LIMITS__MAX_MESSAGE_BYTES=65536
 
 ## Veritabanı
 
-Şema: [`/home/runner/work/mercek/mercek/sql/schema.sql`](/home/runner/work/mercek/mercek/sql/schema.sql)
+Şema: `sql/schema.sql`
 
 - Ana tablo: `syslog_events`
 - Partition key: `received_at`
@@ -67,6 +67,6 @@ cargo test
 
 ## Operasyon
 
-- Dockerfile: `/home/runner/work/mercek/mercek/deploy/Dockerfile`
-- systemd unit: `/home/runner/work/mercek/mercek/deploy/mercek.service`
+- Dockerfile: `deploy/Dockerfile`
+- systemd unit: `deploy/mercek.service`
 - Retention/rotation için PostgreSQL partition cleanup cron/job önerilir (aylık partition drop/archival).
