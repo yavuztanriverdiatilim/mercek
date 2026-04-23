@@ -9,7 +9,7 @@ Tokio tabanlı async syslog sunucusu. RFC3164 ve RFC5424 formatlarını best-eff
 - Parse hatalarında raw mesajı koruyarak `valid=false` kayıt
 - Bounded queue, `drop_newest` veya `backpressure` politikası
 - Batch + transaction tabanlı PostgreSQL yazımı
-- `app_name/tag=nginx` olan kayıtları nginx access log alanlarına parse edip `nginx_access_logs` tablosuna da yazma
+- `app_name/tag=nginx` olan access kayıtlarını parse edip yalnızca `nginx_access_logs` tablosuna yazma
 - Retry + dead-letter loglama
 - Partitioned tablo şeması (`received_at` RANGE)
 - `/healthz`, `/readyz`, `/metrics` endpointleri
