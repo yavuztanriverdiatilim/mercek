@@ -73,23 +73,29 @@ impl PgWriter {
             .await
             .context("schema bootstrap failed")?;
 
+        // Pre-create both the current and next month's partitions so that
+        // messages around month boundaries don't fall into the default
+        // partition.
         let now = Utc::now();
-        let partition_name = format!("syslog_events_{}_{:02}", now.year(), now.month());
-        let start = format!("{:04}-{:02}-01", now.year(), now.month());
-        let (next_year, next_month) = if now.month() == 12 {
-            (now.year() + 1, 1)
-        } else {
-            (now.year(), now.month() + 1)
-        };
-        let end = format!("{:04}-{:02}-01", next_year, next_month);
+        let (year, month) = (now.year(), now.month());
+        let (next_y, next_m) = next_month(year, month);
+        let (after_y, after_m) = next_month(next_y, next_m);
 
-        let partition_sql = format!(
-            "CREATE TABLE IF NOT EXISTS {partition_name} PARTITION OF syslog_events FOR VALUES FROM ('{start}') TO ('{end}');"
-        );
-        client
-            .batch_execute(&partition_sql)
-            .await
-            .context("partition bootstrap failed")?;
+        for (y, m, end_y, end_m) in [
+            (year, month, next_y, next_m),
+            (next_y, next_m, after_y, after_m),
+        ] {
+            let partition_name = format!("syslog_events_{y}_{m:02}");
+            let start = format!("{y:04}-{m:02}-01");
+            let end = format!("{end_y:04}-{end_m:02}-01");
+            let partition_sql = format!(
+                "CREATE TABLE IF NOT EXISTS {partition_name} PARTITION OF syslog_events FOR VALUES FROM ('{start}') TO ('{end}');"
+            );
+            client
+                .batch_execute(&partition_sql)
+                .await
+                .with_context(|| format!("partition bootstrap failed for {partition_name}"))?;
+        }
         Ok(())
     }
 
@@ -163,8 +169,6 @@ impl PgWriter {
             .context("prepare nginx insert failed")?;
 
         for event in events {
-            let fmt = format!("{:?}", event.format).to_lowercase();
-            let protocol = format!("{:?}", event.protocol).to_lowercase();
             match event_write_target(event) {
                 EventWriteTarget::NginxAccessOnly(nginx) => {
                     tx.execute(
@@ -195,6 +199,8 @@ impl PgWriter {
                     .context("insert nginx access log failed")?;
                 }
                 EventWriteTarget::SyslogOnly => {
+                    let fmt = event.format.as_str();
+                    let protocol = event.protocol.as_str();
                     tx.execute(
                         &stmt,
                         &[
@@ -346,6 +352,14 @@ fn split_request_line(input: &str) -> (Option<String>, Option<String>, Option<St
     )
 }
 
+fn next_month(year: i32, month: u32) -> (i32, u32) {
+    if month == 12 {
+        (year + 1, 1)
+    } else {
+        (year, month + 1)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{EventWriteTarget, PgWriter};
@@ -419,6 +433,13 @@ mod tests {
         let event = sample_event(Some("nginx"), "invalid-nginx-line");
         let target = super::event_write_target(&event);
         assert!(matches!(target, EventWriteTarget::SyslogOnly));
+    }
+
+    #[test]
+    fn next_month_wraps_december() {
+        assert_eq!(super::next_month(2025, 12), (2026, 1));
+        assert_eq!(super::next_month(2025, 6), (2025, 7));
+        assert_eq!(super::next_month(2025, 1), (2025, 2));
     }
 
     fn sample_event(app_name: Option<&str>, message: &str) -> SyslogEvent {

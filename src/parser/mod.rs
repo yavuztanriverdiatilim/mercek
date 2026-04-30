@@ -3,9 +3,10 @@ use chrono::{Datelike, NaiveDateTime, TimeZone, Utc};
 use serde_json::{Map, Value};
 
 pub fn parse(raw: RawMessage) -> SyslogEvent {
-    let payload = raw.payload.clone();
-    let msg = payload.trim();
-    let (pri, rest) = match parse_pri(msg) {
+    // Trim once and own the resulting slice so we can move `raw` into the
+    // resulting `SyslogEvent` without holding a borrow of `raw.payload`.
+    let msg = raw.payload.trim().to_string();
+    let (pri, rest) = match parse_pri(&msg) {
         Some(v) => v,
         None => return SyslogEvent::invalid(raw, "missing PRI"),
     };
@@ -49,19 +50,20 @@ fn is_rfc3164_ts(s: &str) -> bool {
         return false;
     }
     matches!(
-        &trimmed[0..3.min(trimmed.len())],
-        "Jan"
-            | "Feb"
-            | "Mar"
-            | "Apr"
-            | "May"
-            | "Jun"
-            | "Jul"
-            | "Aug"
-            | "Sep"
-            | "Oct"
-            | "Nov"
-            | "Dec"
+        trimmed.get(0..3),
+        Some(
+            "Jan" | "Feb"
+                | "Mar"
+                | "Apr"
+                | "May"
+                | "Jun"
+                | "Jul"
+                | "Aug"
+                | "Sep"
+                | "Oct"
+                | "Nov"
+                | "Dec"
+        )
     )
 }
 

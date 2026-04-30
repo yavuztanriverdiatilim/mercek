@@ -10,6 +10,16 @@ pub enum InputProtocol {
     Tls,
 }
 
+impl InputProtocol {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            InputProtocol::Udp => "udp",
+            InputProtocol::Tcp => "tcp",
+            InputProtocol::Tls => "tls",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RawMessage {
     pub payload: String,
@@ -23,6 +33,16 @@ pub enum EventFormat {
     Rfc3164,
     Rfc5424,
     Unknown,
+}
+
+impl EventFormat {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            EventFormat::Rfc3164 => "rfc3164",
+            EventFormat::Rfc5424 => "rfc5424",
+            EventFormat::Unknown => "unknown",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

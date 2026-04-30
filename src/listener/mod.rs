@@ -76,7 +76,13 @@ async fn run_udp(
                 break;
             }
             recv = socket.recv_from(&mut buf) => {
-                let (size, src) = recv.context("udp recv failed")?;
+                let (size, src) = match recv {
+                    Ok(v) => v,
+                    Err(e) => {
+                        warn!(error = %e, "udp recv failed; continuing");
+                        continue;
+                    }
+                };
                 if size == cfg.limits.max_message_bytes {
                     warn!(source = %src, "udp message hit max size limit, possibly truncated");
                 }
@@ -108,7 +114,13 @@ async fn run_tcp(
                 break;
             }
             accept = listener.accept() => {
-                let (stream, addr) = accept.context("tcp accept failed")?;
+                let (stream, addr) = match accept {
+                    Ok(v) => v,
+                    Err(e) => {
+                        warn!(error = %e, "tcp accept failed; continuing");
+                        continue;
+                    }
+                };
                 let permit = match semaphore.clone().try_acquire_owned() {
                     Ok(p) => p,
                     Err(_) => {
@@ -171,7 +183,13 @@ async fn run_tls(
                 break;
             }
             accept = listener.accept() => {
-                let (stream, addr) = accept.context("tls accept failed")?;
+                let (stream, addr) = match accept {
+                    Ok(v) => v,
+                    Err(e) => {
+                        warn!(error = %e, "tls accept failed; continuing");
+                        continue;
+                    }
+                };
                 let permit = match semaphore.clone().try_acquire_owned() {
                     Ok(p) => p,
                     Err(_) => {
@@ -269,12 +287,14 @@ fn load_certs(path: &str) -> Result<Vec<rustls::pki_types::CertificateDer<'stati
 
 fn load_key(path: &str) -> Result<rustls::pki_types::PrivateKeyDer<'static>> {
     let bytes = std::fs::read(path).with_context(|| format!("failed to read key: {path}"))?;
-    let mut cursor = std::io::Cursor::new(bytes.clone());
-    if let Some(key) = rustls_pemfile::pkcs8_private_keys(&mut cursor).next() {
-        return Ok(key?.into());
+    {
+        let mut cursor = std::io::Cursor::new(&bytes);
+        if let Some(key) = rustls_pemfile::pkcs8_private_keys(&mut cursor).next() {
+            return Ok(key?.into());
+        }
     }
 
-    let mut cursor = std::io::Cursor::new(bytes);
+    let mut cursor = std::io::Cursor::new(&bytes);
     if let Some(key) = rustls_pemfile::rsa_private_keys(&mut cursor).next() {
         return Ok(key?.into());
     }

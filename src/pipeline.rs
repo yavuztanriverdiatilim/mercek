@@ -98,12 +98,10 @@ async fn run_writer_loop(
             maybe = db_rx.recv() => {
                 match maybe {
                     Some(event) => {
-                        let enqueue_started = Instant::now();
                         batch.push(event);
                         if batch.len() >= cfg.batching.batch_size {
                             flush_batch(&db, &mut batch).await;
                         }
-                        metrics::histogram!("syslog_pipeline_enqueue_latency_ms").record(enqueue_started.elapsed().as_millis() as f64);
                     }
                     None => {
                         flush_batch(&db, &mut batch).await;
