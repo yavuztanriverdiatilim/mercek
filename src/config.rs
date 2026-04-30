@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -190,13 +190,44 @@ impl AppConfig {
     pub fn load() -> Result<Self> {
         let settings = config::Config::builder()
             .add_source(config::Environment::with_prefix("MERCEK").separator("__"))
-            .build()?;
+            .build()
+            .context("failed to build configuration")?;
 
-        let mut cfg = Self::default();
-        if let Ok(parsed) = settings.try_deserialize::<Self>() {
-            cfg = parsed;
-        }
+        let cfg: Self = settings
+            .try_deserialize()
+            .context("failed to deserialize configuration from environment")?;
+        cfg.validate()?;
         Ok(cfg)
+    }
+
+    fn validate(&self) -> Result<()> {
+        if self.listeners.enable_tls {
+            if self.listeners.tls_cert_path.as_deref().unwrap_or("").is_empty() {
+                bail!("MERCEK__LISTENERS__TLS_CERT_PATH must be set when TLS is enabled");
+            }
+            if self.listeners.tls_key_path.as_deref().unwrap_or("").is_empty() {
+                bail!("MERCEK__LISTENERS__TLS_KEY_PATH must be set when TLS is enabled");
+            }
+        }
+        if self.batching.batch_size == 0 {
+            bail!("batching.batch_size must be greater than 0");
+        }
+        if self.batching.flush_interval_ms == 0 {
+            bail!("batching.flush_interval_ms must be greater than 0");
+        }
+        if self.queue.ingress_capacity == 0 || self.queue.db_capacity == 0 {
+            bail!("queue capacities must be greater than 0");
+        }
+        if self.limits.max_message_bytes == 0 {
+            bail!("limits.max_message_bytes must be greater than 0");
+        }
+        if self.limits.max_tcp_connections == 0 {
+            bail!("limits.max_tcp_connections must be greater than 0");
+        }
+        if self.db.pool_max_size == 0 {
+            bail!("db.pool_max_size must be greater than 0");
+        }
+        Ok(())
     }
 }
 
